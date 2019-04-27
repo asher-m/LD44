@@ -3,3 +3,11 @@ $480.00 to learn how to eat better
 and produce more blood. Increase
 upkeep by 1.05x AND increase regen
 by 1.3x.
+
+Autosuck® Homesucker™ brings the
+convenience of your living
+room to the profitability of
+donating blood!  Homesucker™ 
+removes half the normal amount the
+normal amount of blood, allowing
+you to do the rest.  ${cost}

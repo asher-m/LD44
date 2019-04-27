@@ -4,6 +4,7 @@
 A game by Asher Merrill for Ludum Dare 44.
 """
 
+import math
 import pygame
 import sys
 
@@ -103,7 +104,8 @@ class Game:
         self.sell_blood_manual_price = 24.
 
         # List of all researches and whether or not to allow them now:
-        self.tech_0 = False # etc...
+        # Autosuck:
+        self.Autosuck = False
 
 
     def exit(self):
@@ -128,18 +130,20 @@ class Game:
         """ Method to update current balances of things,
         (and other numbers as they become relevant.) """
         # Check to make sure we're alive:
-        if self.vars['money'] <= 0 or self.vars['blood'] <= 0:
-            if self.vars['money'] < 0:
-                self.vars['money'] = 0
-            if self.vars['blood'] < 0:
-                self.vars['blood'] = 0
-            # Set state to dead if we are...
-            self.alive = False
-            if not elements['console_dead_notice'].active:
-                elements['console_dead_notice'].active = True
+        #FIXME
+#        if self.vars['money'] <= 0 or self.vars['blood'] <= 0:
+#            if self.vars['money'] < 0:
+#                self.vars['money'] = 0
+#            if self.vars['blood'] < 0:
+#                self.vars['blood'] = 0
+#            # Set state to dead if we are...
+#            self.alive = False
+#            if not elements['console_dead_notice'].active:
+#                elements['console_dead_notice'].active = True
 
         # Do these if we're alive:
         if self.alive:
+            # Do these first:
             # Subtract cost from money:
             self.vars['money'] -= self.vars['upkeep'] * self.vars['speed']
             # Add however much we've regened:
@@ -149,10 +153,16 @@ class Game:
                 if self.vars['blood'] > self.max_blood:
                     self.vars['blood'] = self.max_blood
 
-            # Regulars:
-            # Can put regularly updated elements here, or below, depending...
+            # Regularly updated elements:
+            # Check if we can enable any new researches:
             self.research_allow()
 
+            # Process queue of researches and their effects:
+            for l in research:
+                if l['class'].gameFunctionName:
+
+
+        # Finally update some things at the end here:
         # Get this percent going:
         self.vars['character_blood_percent'] = self.vars['blood'] / \
             self.max_blood * 100
@@ -349,40 +359,50 @@ class Game:
 
         (The latter bit is also accomplished in various Research.activate()
         methods.) """
-        sci = [i for i in research if i['tree'] == treeScientific]
-        soc = [i for i in research if i['tree'] == treeSocial]
-        spi = [i for i in research if i['tree'] == treeSpiritual]
-
         # For each tree, check if the previous tech has been researched:
         # Find next locked tech:
-        for l in [sci, soc, spi]:
-            # Get statuses of all techs:
-            unlocked = [i['class'].unlocked for i in l]
-            # Get index of first locked tech, (ie., all previous techs locked)
-            if not all(unlocked):
-                # Make sure we still have locked techs:
-                j = unlocked.index(False)
-            else:
-                # If not, continue:
-                continue
-            # If we're allowed to unlock it, do so:
-            if l[j]['class'].allow_unlock(self.vars):
-                l[j]['class'].unlocked = True
+        for v in research:
+            if v['class'].allow_unlock(self.vars) == True:
+                v['class'].unlocked = True
 
-    def research_activate_Hematology(self):
+    def research_activate_Scientific_Hematology(self):
         """ Method to activate the Hematology research.
 
         Modify internal parameters and then call the Hematology class's
-        activate method to finish the job. """
-        # Update class vars from what Hematology says:
-        self.vars['money'] -= Hematology.cost
-        self.vars['upkeep'] *= Hematology.upkeep_mult
-        self.regen *= Hematology.regen_mult
+        activate method to finish the job.
+
+        NOTE: By never changing the active status of Hematology to False,
+        (and this is okay because it has no "live" parameters,) it's always
+        ready to be displayed in the queue again, which is good. """
         # Find the correct instance of Hematology:
         for v in research:
             if isinstance(v['class'], Hematology):
-                v['class'].activate()
+                break
+        # Update class vars from what Hematology says:
+        self.vars['money'] -= Hematology.base_cost * 2 ** v['class'].tech_num
+        self.vars['upkeep'] *= Hematology.upkeep_mult
+        self.regen *= Hematology.regen_mult
+        # Increment the tech number:
+        v['class'].tech_num += 1
+        v['class'].unlocked = False
+        # Leave Hematology "inactive," see above:
+        # v['class'].active = False
 
+    def research_activate_None_Autosuck(self):
+        for v in research:
+            if isinstance(v['class'], Autosuck):
+                break
+        # Update class vars from what Autosuck says:
+        self.vars['money'] -= Autosuck.base_cost * 2 ** v['class'].tech_num
+        self.vars['upkeep'] *= Autosuck.upkeep_mult
+        # Enable Autosuck, and change state to active so
+        # we know it's already occuring/it does occur.
+        v['class'].active = True
+        # Disable the research:
+        v['class'].unlocked = True
+
+    def research_None_Autosuck(self):
+        pass
 
 class Container:
     """ A class that has methods useful for determining if elements inside it
@@ -548,6 +568,7 @@ class Text:
         # Finally display all of that:
         display.blit(textbox, textbox_loc)
 
+
 class Button:
     """ Class defining buttons and how they behave when things
     are over them. """
@@ -626,9 +647,19 @@ class Research:
     unlocked indicates a research is available and should be displayed in the
     research queue.
     active indicates that a research is complete. """
-    def __init__(self, unlocked=False, active=False):
+    def __init__(self, resTyep, unlocked=False, active=False, gameFunction=None):
+        """ Method to initialize generic research.
+
+        There are two types of research: ONCLICK and AUTO, (all caps,
+        as strings.)  ONCLICK can be something that changes numbers, (ie.,
+        Hematology 0 through infinity,) or something that enables a Container
+        and its associated actions.  AUTO is something that requires a game
+        update, and is processed in Game.update.
+        """
         self.unlocked = unlocked
         self.active = active
+        self.tech_num = 0
+        self.gameFunction = gameFunction
 
     def draw(self, mouse, fmtvars):
         """ Method to draw buttons and relevant text of tech. Returns a pygame
@@ -637,14 +668,13 @@ class Research:
         techWindow.fill(GRAY_LIGHT)
         return techWindow
 
-    def activate(self):
-        """ Method to make changes to Game (enable/disable techs) if this is
-        active, and set self active. """
-        self.active = True
-        # Generally, activate SHOULD unlock the next tech.
-
     def allow_unlock(self, fmtvars):
         """ Method to check if all conditions are valid to allow unlock. """
+
+    def gameFunctionName(self):
+        """ Method to return (upstream) the name of the function to be
+        executed. """
+        return self.gameFunction
 
 
 class Hematology(Research):
@@ -653,20 +683,69 @@ class Hematology(Research):
         1. Increasing upkeep/cost (5%)
         2. Increase regen rate (30%) """
     """ Research Name """
-    resName = "Hematology".upper()
+    resName = "Hematology {} (Science)".upper()
     """ How much money to unlock this tech? """
-    cost = 480.
+    base_cost = 1.
     """ How much more upkeep does this cost? """
     upkeep_mult = 1.05
     """ How much more regen do we get? """
     regen_mult = 1.5
 
     # Create text string:
-    text = "Purchase a hematology textbook for\n"\
-           "${:6.2f} to learn how to eat better\n"\
-           "and produce more blood. Increase\n"\
-           "upkeep by {:4.2f}x AND increase regen\n"\
-           "by {:4.2f}x.".format(cost, upkeep_mult, regen_mult)
+    #TODO: Update this list of strings to be nice.
+    text = ["Purchase a hematology textbook for\n"\
+            "${cost:6.2f} to learn how to eat better\n"\
+            "and produce more blood. Increase\n"\
+            "upkeep by {upkeep_mult:4.2f}x AND increase regen\n"\
+            "by {regen_mult:4.2f}x."]
+
+    def draw(self, mouse, fmtvars):
+        """ Method to draw buttons and stuff.
+
+        Returns a pygame surface that the caller will blit in the correct
+        location. """
+        # Create a pygame surface:
+        techWindow = super(Hematology, self).draw(mouse, fmtvars)
+        # Draw a nice title:
+        title = Text(Hematology.resName.format(self.tech_num), GRAY_DOWN, (5, 5), font=FONT,
+                     centerx=False, centery=False)
+        title.draw(techWindow)
+
+        # Now the explanation of the tech:
+        words = Text(Hematology.text[self.tech_num if self.tech_num < \
+                                     len(Hematology.text) else -1].\
+        format(**{'cost':Hematology.base_cost * 2**self.tech_num, \
+                  'upkeep_mult':Hematology.upkeep_mult, 'regen_mult':\
+                  Hematology.regen_mult}),
+                     BLACK, (10, 21), font=FONT, centerx=False, centery=False)
+        # ......the above is one (poorly readable) block.
+        words.draw(techWindow)
+        return techWindow
+
+    def allow_unlock(self, fmtvars):
+        """ Method to check to make sure we have enough money over all time """
+        if fmtvars['blood_sold'] / fmtvars['blood_unit_conversion'] >= \
+        1.24336 * math.exp(0.693833*self.tech_num):
+            return True
+        else:
+            return False
+
+
+class Autosuck(Research):
+    """ A subclass of research. """
+    """ Research Name """
+    resName = "Auto Bloodsuck".upper()
+    """ How much money to unlock this tech? """
+    cost = 1000.
+
+    # Create text string:
+    text = "Autosuck® Homesucker™ brings the\n"\
+           "convenience of your living\n"\
+           "room to the profitability of\n"\
+           "donating blood!  Homesucker™\n"\
+           "removes half the normal amount the\n"\
+           "normal amount of blood, allowing\n"\
+           "you to do the rest. ${:6.2f}".format(cost)
 
     def draw(self, mouse, fmtvars):
         """ Method to draw buttons and stuff.
@@ -686,12 +765,9 @@ class Hematology(Research):
         words.draw(techWindow)
         return techWindow
 
-    def activate(self):
-        print("IT WORKED MOTHERFUCKERS!")
-
     def allow_unlock(self, fmtvars):
         """ Method to check to make sure we have enough money over all time """
-        if fmtvars['blood_sold'] / fmtvars['blood_unit_conversion'] > 20.:
+        if fmtvars['blood_sold'] / fmtvars['blood_unit_conversion'] > 50.:
             return True
         else:
             return False
@@ -765,11 +841,13 @@ elements = {
 treeScientific = ResearchTree()
 treeSocial = ResearchTree()
 treeSpiritual = ResearchTree()
+treeNone = ResearchTree()
 
 
 """ List of researches available in the game and their status. """
 research = [
-        {'tree':treeScientific, 'class':Hematology(unlocked=False), 'actions': [Button(GRAY_UP, GRAY_DOWN, (300 - 48 - 16, 194 - 32 - 16, 48, 32), Game.research_activate_Hematology, active=True, text="OK")]}
+        {'tree':treeScientific, 'class':Hematology(unlocked=False), 'actions': [Button(GRAY_UP, GRAY_DOWN, (300 - 48 - 16, 194 - 32 - 16, 48, 32), Game.research_activate_Scientific_Hematology, active=True, text="OK")]},
+        {'tree':treeNone, 'class':Autosuck(unlocked=False), 'actions': [Button(GRAY_UP, GRAY_DOWN, (300 - 48 - 16, 194 - 32 - 16, 48, 32), Game.research_activate_None_Autosuck, active=True, text="OK")]}
         ]
 
 
