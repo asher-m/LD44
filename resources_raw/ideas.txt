@@ -1,0 +1,7 @@
+USE MONEY AT 1 / 120 ticks
+HEAL AT 1 / 60 ticks
+
+ACTION: Sell plasma (+ 6 money, , should run out of money within 120 ticks if we don't sell more plasma)
+
+RESEARCHES:
+Improve nutrition (INCREASE )
