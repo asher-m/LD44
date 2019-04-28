@@ -11,3 +11,10 @@ donating blood!  Homesucker™
 removes half the normal amount the
 normal amount of blood, allowing
 you to do the rest.  ${cost}
+
+Tired of being *the* dumb kid on
+the block?  Show 'em all by
+learning some high school (maybe
+even middle school) economics!
+You too can control the world
+through numbers... ${6.2f}
