@@ -4,6 +4,7 @@
 A game by Asher Merrill for Ludum Dare 44.
 """
 
+import datetime
 import math
 import pygame
 import sys
@@ -74,9 +75,10 @@ class Game:
         # Game mechanic variables:
         # Need an alive stat:
         self.alive = True
-        
+
         # Some time vars:
         self.ticks = 0
+        self.time = 0
 
         # Define speed of game:
         self.vars['speed'] = 1.
@@ -87,26 +89,30 @@ class Game:
         # Blood:
         self.vars['blood'] = 100.
         # Max blood, maybe for something vampiric...
-        self.max_blood = 100.
+        self.vars['blood_max'] = 100.
         # Regen rate:
-        self.regen = 1./12.
+        self.vars['blood_regen'] = 1./12.
         # Lastly the total sold:
         self.vars['blood_sold'] = 0
         # Blood to unit conversion ratio (ie., divide blood sold by this...):
         self.vars['blood_unit_conversion'] = 60
         # Get this percent going:
-        self.vars['character_blood_percent'] = self.vars['blood'] / \
-            self.max_blood * 100
+        self.vars['blood_character_percent'] = self.vars['blood'] / \
+            self.vars['blood_max'] * 100
         # That should be all the initialization required...
-
 
         # Sell blood manual stuff:
         # How much blood blood is sold each time:
-        self.vars['sell_blood_quantity'] = 60.
+        self.vars['blood_sell_quantity'] = 60.
         # How much blood is sold for:
-        self.vars['sell_blood_price'] = 24.
+        self.vars['blood_sell_price'] = 24.
         # How much blood is stored:
         self.vars['blood_stored'] = 0
+
+        # Some stuff about the economy:
+        self.vars['economy_demand_terran_max_units'] = 5e12
+        self.vars['economy_demand_terran'] = 0.25
+        self.vars['economy_demand_modifiers'] = {'None_Null_modifier_example': "demand += 0"}
 
         # List of all researches and whether or not to allow them now:
         # Autosuck:
@@ -128,14 +134,20 @@ class Game:
             self.draw()
             self.update_display()
             i += 1
-            if i % 300 == 0:
-                self.vars['log'].append(f"New line...i = {i}")
+            if self.ticks % 300 == 0:
+                years, seconds = divmod(self.time, 365.2422 * 24 * 3600)
+                weeks, seconds = divmod(seconds, 7 * 24 * 3600)
+                days, seconds = divmod(seconds, 24 * 3600)
+                hours, seconds = divmod(seconds, 3600)
+                minutes, seconds = divmod(seconds, 60)
+                self.vars['log'].append(f"Current game time is {int(years):d} years, {int(weeks):d} weeks, {int(days):d} days, {int(hours):d}:{int(minutes):d}:{round(seconds)}.")
 
     def update(self):
         """ Method to update current balances of things,
         (and other numbers as they become relevant.) """
         self.ticks += 1
-        
+        self.time += self.vars['speed'] / 60
+
         # Check to make sure we're alive:
         #FIXME
 #        if self.vars['money'] <= 0 or self.vars['blood'] <= 0:
@@ -161,28 +173,49 @@ class Game:
                 # logitic curve with sharp bottom at 0:
                 # This is the derivative, f(x) = 100 - 1 / ((x + 39) / 180)**3
                 self.vars['blood'] += 17496000 / (self.vars['blood'] + 39)**4 \
-                * self.regen * self.vars['speed']
-                # Truncate if we've gone over:
-                if self.vars['blood'] > self.max_blood:
-                    self.vars['blood'] = self.max_blood
+                * self.vars['blood_regen'] * self.vars['speed']
 
             # Regularly updated elements:
+            # Elements from researches EVERY tick, (updateOn == "EVERY"):
+            for _, l in research.items():
+                if (l['class'].resType == 'AUTO' and
+                    l['class'].active and
+                    l['class'].updateOn == "EVERY"):
+                    gameFunction = l['class'].gameFunctionName()
+                    gameFunction(self)
+
             # Only do these every 1/10th second:
             if self.ticks % 6 == 0:
                 # Check if we can enable any new researches:
                 self.research_allow()
-    
+
                 # Process queue of researches and their effects:
-                for l in research:
-                    if l['class'].resType == 'AUTO' and l['class'].active:
+                for _, l in research.items():
+                    if (l['class'].resType == 'AUTO' and
+                        l['class'].active and
+                        l['class'].updateOn == "TICK"):
                         gameFunction = l['class'].gameFunctionName()
                         gameFunction(self)
-                    
+
+            # Only do these when blood reaches is 0.95 * max:
+            if self.vars['blood'] >= 0.95 * self.vars['blood_max']:
+                for _, l in research.items():
+                    if (l['class'].resType == 'AUTO' and
+                        l['class'].active and
+                        l['class'].updateOn == "BLOOD"):
+                        gameFunction = l['class'].gameFunctionName()
+                        gameFunction(self)
 
         # Finally update some things at the end here:
         # Get this percent going:
-        self.vars['character_blood_percent'] = self.vars['blood'] / \
-            self.max_blood * 100
+        self.vars['blood_character_percent'] = \
+            self.vars['blood'] / \
+            self.vars['blood_max'] * 100
+
+    def update_display(self):
+        """ Method to update the display. """
+        pygame.display.update()
+        CLOCK.tick(FPS)
 
     def event(self):
         """ Method to evaluate events since last tick. """
@@ -198,8 +231,10 @@ class Game:
                 gameFunction = None
                 # Process generic entities:
                 for elem_name, elem_obj in elements.items():
-                    if (elem_obj.mouse_over(self.mouse) if isinstance(elem_obj,
-                        (Container, Button)) else elem_obj.mouse_over()):
+                    if ((elem_obj.mouse_over(self.mouse)
+                         if isinstance(elem_obj, (Container, Button))
+                         else elem_obj.mouse_over())
+                        and elem_obj.active):
                         # Lookup the game function, according to the type:
                         if isinstance(elem_obj, (Button, Text)):
                             gameFunction = elem_obj.gameFunctionName()
@@ -209,12 +244,12 @@ class Game:
                 if not gameFunction:
                     # Process entities in the research queue:
                     gameFunction = self.event_research_queue()
+                # If we STILL don't have a function:
+                if not gameFunction:
+                    gameFunction = Game.event_null
                 # Now call the game function:
-                if gameFunction:
-                    print(gameFunction)
-                    gameFunction(self)
-                else:
-                    print("Null event processed.  (Some user interaction not on a button...)")
+                print(gameFunction)
+                gameFunction(self)
 
     def event_null(self):
         """ A null event for the death notification, and possibly others... """
@@ -225,13 +260,13 @@ class Game:
 
         Returns gameFunction from whatever button was depressed. """
         # Select what researches are unlocked and next in the queue:
-        for j, v in enumerate([i for i in research if i['class'].unlocked
-                               == True and i['class'].active == False][:3]):
+        for j, v in enumerate([i for _, i in research.items() if i['class'].unlocked
+                               and not i['class'].active][:3]):
             # Spoof mouse location so we can get buttons right:
             mouse = (self.mouse[0] - 1140, self.mouse[1] - 100 - (18 + 194 * j))
             # Ask if any of the buttons are active:
             for b in v['actions']:
-                if b.mouse_over(mouse):
+                if b.mouse_over(mouse) and b.active:
                     # Lookup the game function, according to the type:
                     if isinstance(b, (Button, Text)):
                         gameFunction = b.gameFunctionName()
@@ -242,10 +277,10 @@ class Game:
     def event_console_speed_up(self):
         """ Console speed control functions. """
         if self.alive:
-            if self.vars['speed'] < 9999.9999:
+            if self.vars['speed'] < 10000.:
                 self.vars['speed'] *= 1.2
-                if self.vars['speed'] > 9999.9999:
-                    self.vars['speed'] = 9999.9999
+                if self.vars['speed'] > 10000.:
+                    self.vars['speed'] = 10000.
 
     def event_console_speed_normal(self):
         """ Console speed control functions. """
@@ -263,16 +298,50 @@ class Game:
     def event_sell_blood_manual(self):
         """ Method to manually sell blood. """
         if self.alive:
-            self.vars['blood'] -= self.vars['sell_blood_quantity']
-            self.vars['money'] += self.vars['sell_blood_price']
-            self.vars['blood_sold'] += self.vars['sell_blood_quantity']
+            self.vars['blood'] -= self.vars['blood_sell_quantity']
+            self.vars['money'] += self.vars['blood_sell_price']
+            self.vars['blood_sold'] += self.vars['blood_sell_quantity']
+
+    def event_Scientific_BasicEconomics_handler(self):
+        """ Method to call all the other functions that BasicEconomics
+        relies on. """
+        # Update demand:
+        self.event_Scientific_BasicEconomics_demand()
+        self.event_Scientific_BasicEconomics_store()
+
+
+    def event_Scientific_BasicEconomics_demand(self):
+        """ Method to determine the demand of the terran economy.
+
+        I wanted a model that has:
+            Primary behaviour like 1/x
+            f(x) = 1 at x = 0
+            f(x) = 0.1 at x = economy_demand_terran_max_units
+
+        This yielded a model like:
+            f(x) = a / (x + a)
+            a = 5.555556e11
+
+        I'm going to allow demand to be modified by things like marketing,
+        etc, which will have exponentially decaying effects.
+
+        These effects will be added to a list as expressions, which are
+        evaluated here.
+        """
+        # The demand expression:
+        a = 5.555556e11
+        x = self.vars['blood_sold']
+        demand =  - a / (x + a)**2
+
+        # Evaluate all expressions:
+
+
 
     def event_Scientific_BasicEconomics_store(self):
         """ Method to manually sell blood. """
         if self.alive:
-            self.vars['blood'] -= self.vars['sell_blood_quantity']
-            self.vars['money'] += self.vars['sell_blood_price']
-            self.vars['blood_sold'] += self.vars['sell_blood_quantity']
+            self.vars['blood'] -= self.vars['blood_sell_quantity']
+            self.vars['blood_stored'] += self.vars['blood_sell_quantity']
 
     def draw(self):
         """ Method to draw the screen each time a frame is requested. """
@@ -316,16 +385,41 @@ class Game:
 
         # Now blit the current status of bank accounts and health:
         # Draw labels for the other elements:
-        disp_text_center_vertical(console, BOLDFONT, "HEALTH", RED, (1020, 34))
-        disp_text_center_vertical(console, BOLDFONT, "MONEY", GOLD, (1020, 50))
-        disp_text_center_vertical(console, BOLDFONT,
-                                  "UNITS SOLD", BLACK, (1020, 66))
-        disp_text_center_vertical(console, FONT, "{:<40s}".format(
-            str("*" * int(40 * self.vars['blood'] / self.max_blood))), RED, (1105, 34))
-        disp_text_center_vertical(console, FONT, "$" + f"{self.vars['money']:39.2f}", BLACK, (1105, 50))
+        disp_text_center_vertical(console,  # Health
+                                  BOLDFONT,
+                                  "HEALTH",
+                                  RED,
+                                  (1020, 34))
+        disp_text_center_vertical(console,  # Money
+                                  BOLDFONT,
+                                  "MONEY",
+                                  GOLD,
+                                  (1020, 50))
+        disp_text_center_vertical(console,  # Blood sold
+                                  BOLDFONT,
+                                  "UNITS SOLD",
+                                  BLACK,
+                                  (1020, 66))
+        disp_text_center_vertical(console,  # Blood remaining
+                                  FONT,
+                                  "{:<40s}".format(str("*" *
+                                   int(40 * self.vars['blood']
+                                   / self.vars['blood_max']))),
+                                  RED,
+                                  (1105, 34))
+        disp_text_center_vertical(console,  # Money
+                                  FONT,
+                                  "$" + f"{self.vars['money']:39.2f}",
+                                  BLACK,
+                                  (1105, 50))
         # Round off out units sold so it looks nice:
-        units_sold = round(self.vars['blood_sold'] / self.vars['blood_unit_conversion'])
-        disp_text_center_vertical(console, FONT, f"{units_sold:40d}", BLACK, (1105, 66))
+        units_sold = round(self.vars['blood_sold'] /
+                           self.vars['blood_unit_conversion'])
+        disp_text_center_vertical(console,  # Units of blood sold, total.
+                                  FONT,
+                                  f"{units_sold:40d}",
+                                  BLACK,
+                                  (1105, 66))
 
         # Finally blit display:
         self.display.blit(console, (0, 0))
@@ -337,9 +431,13 @@ class Game:
         text = Text("The character will\n"
                     "go here with animations\n"
                     "correspondingto blood\n"
-                    "percent: {character_blood_percent:5.2f}%.\n"
-                    "12345678901234567890123456789012345678901234567890", RED, (0, 0),
-                    font=FONT, centerx=False, centery=False)
+                    "percent: {blood_character_percent:5.2f}%.\n"
+                    "12345678901234567890123456789012345678901234567890",
+                    RED,
+                    (0, 0),
+                    font=FONT,
+                    centerx=False,
+                    centery=False)
 
         text.draw(character, self.vars)
         self.display.blit(character, (1140, 700))
@@ -355,15 +453,16 @@ class Game:
         title.draw(queue)
 
         # Select what researches are unlocked and next in the queue:
-        for j, v in enumerate([i for i in research if i['class'].unlocked
-                               == True and i['class'].active == False][:3]):
+        for j, v in enumerate([i for _, i in research.items() if i['class'].unlocked
+                               and not i['class'].active][:3]):
             # Spoof mouse location so we can get buttons right:
             mouse = (self.mouse[0] - 1140, self.mouse[1] - 100 - (18 + 194 * j))
             # Create the techWindow from the tech's class:
             techWindow = v['class'].draw(mouse, self.vars)
             # Draw the buttons:
             for b in v['actions']:
-                b.draw(techWindow, mouse)
+                if b.active:
+                    b.draw(techWindow, mouse)
             # Draw the tech window into the queue window:
             queue.blit(techWindow, (0, 18 + 194 * j))
         # Draw the queue window:
@@ -373,20 +472,14 @@ class Game:
     def draw_dead(self):
         """ Method to display scores and pause game. """
 
-    def update_display(self):
-        """ Method to update the display. """
-        pygame.display.update()
-        CLOCK.tick(FPS)
-
     def research_allow(self):
         """ Method that checks if new techs in each tree should be
         unlocked, AND if any mutually exclusive techs are used.
 
         (The latter bit is also accomplished in various Research.activate()
         methods.) """
-        # For each tree, check if the previous tech has been researched:
-        # Find next locked tech:
-        for v in research:
+        # Check all techs in research as see if we can unlock them:
+        for _, v in research.items():
             if v['class'].allow_unlock(self.vars) == True:
                 v['class'].unlocked = True
 
@@ -400,13 +493,12 @@ class Game:
         (and this is okay because it has no "live" parameters,) it's always
         ready to be displayed in the queue again, which is good. """
         # Find the correct instance of Hematology:
-        for v in research:
-            if isinstance(v['class'], Scientific_Hematology):
-                break
+        v = research['Scientific_Hematology']
+
         # Update class vars from what Hematology says:
         self.vars['money'] -= Scientific_Hematology.base_cost * 2 ** v['class'].tech_num
         self.vars['upkeep'] *= Scientific_Hematology.upkeep_mult
-        self.regen *= Scientific_Hematology.regen_mult
+        self.vars['blood_regen'] *= Scientific_Hematology.regen_mult
         # Increment the tech number:
         v['class'].tech_num += 1
         v['class'].unlocked = False
@@ -415,9 +507,9 @@ class Game:
 
     def research_activate_Scientific_BasicEconomics(self):
         """ Method to activate the BasicEconomics research. """
-        for v in research:
-            if isinstance(v['class'], Scientific_BasicEconomics):
-                break
+        # Get the instance of Scientific_BasicEconomics
+        v = research['Scientific_BasicEconomics']
+
         # Update class vars from what Autosuck says:
         self.vars['money'] -= Scientific_BasicEconomics.base_cost
         # Adjust things so the tech doesn't come back:
@@ -431,9 +523,8 @@ class Game:
         elements['research_Scientific_BasicEconomics_container'].active = True
 
     def research_activate_None_Autosuck(self):
-        for v in research:
-            if isinstance(v['class'], None_Autosuck):
-                break
+        v = research['None_Autosuck']
+
         # Update class vars from what Autosuck says:
         self.vars['money'] -= None_Autosuck.base_cost
         self.vars['upkeep'] *= None_Autosuck.upkeep_mult
@@ -442,7 +533,7 @@ class Game:
         v['class'].active = True
         # Disable the research:
         v['class'].unlocked = True
-        
+
     def research_Scientific_BasicEconomics_random_sell(self):
         """ Method to randomize selling blood at different prices. """
         pass
@@ -450,15 +541,25 @@ class Game:
     def research_None_Autosuck(self):
         """ Method to manually subtract of multiple of (half manual amount)
         when blood is greater than 95 and will remain greater than 65. """
-        if self.vars['blood'] - 65 >= self.vars['sell_blood_quantity'] / 2:
-            n = math.floor((self.vars['blood'] - 65) / \
-                           (self.vars['sell_blood_quantity'] / 2))
+        # If we don't yet have basic economics/the ability to sell/store blood:
+        if not research['Scientific_BasicEconomics']['class'].active:
+            if self.vars['blood'] - 65 >= self.vars['blood_sell_quantity'] / 2:
+                n = math.floor((self.vars['blood'] - 65) / \
+                               (self.vars['blood_sell_quantity'] / 2))
+            else:
+                n = 0
+            self.vars['blood'] -= n * self.vars['blood_sell_quantity'] / 2
+            self.vars['money'] += n * self.vars['blood_sell_price'] / 2
+            self.vars['blood_sold'] += n * self.vars['blood_sell_quantity'] / 2
+        # If we do:
         else:
-            n = 0
-        self.vars['blood'] -= n * self.vars['sell_blood_quantity'] / 2
-        self.vars['money'] += n * self.vars['sell_blood_price'] / 2
-        self.vars['blood_sold'] += n * self.vars['sell_blood_quantity'] / 2
-        
+            if self.vars['blood'] - 65 >= self.vars['blood_sell_quantity'] / 2:
+                    n = math.floor((self.vars['blood'] - 65) / \
+                                   (self.vars['blood_sell_quantity'] / 2))
+            else:
+                n = 0
+            self.vars['blood'] -= n * self.vars['blood_sell_quantity'] / 2
+            self.vars['blood_stored'] += n * self.vars['blood_sell_quantity'] / 2
 
 class Container:
     """ A class that has methods useful for determining if elements inside it
@@ -498,9 +599,9 @@ class Container:
             # Need to handle the different types different again...
             if isinstance(i, (Button,  # Button and Container
                               Container
-                              )) and i.mouse_over(mouse):
+                              )) and i.mouse_over(mouse) and i.active:
                 return True
-            elif isinstance(i, Text):  # Text
+            elif isinstance(i, Text) and i.active:  # Text
                 i.mouse_over()
         return False
 
@@ -514,9 +615,9 @@ class Container:
         container.fill(self.color)
         for i in self.subelems:
             # Need to handle the different types different again...
-            if isinstance(i, Button):
+            if isinstance(i, Button) and i.active:
                 i.draw(container, mouse)
-            elif isinstance(i, Text):
+            elif isinstance(i, Text) and i.active:
                 i.draw(container, fmtvars)
             else:  # It's another container:
                 i.draw(container, mouse, fmtvars)
@@ -703,7 +804,8 @@ class Research:
     unlocked indicates a research is available and should be displayed in the
     research queue.
     active indicates that a research is complete. """
-    def __init__(self, resType, unlocked=False, active=False, gameFunction=None):
+    def __init__(self, resType, unlocked=False, active=False,
+                 gameFunction=None, updateOn='TICK'):
         """ Method to initialize generic research.
 
         There are two types of research: ONCLICK and AUTO, (all caps,
@@ -727,6 +829,15 @@ class Research:
         self.tech_num = 0
         """  What function do we call? """
         self.gameFunction = gameFunction
+        """ When do we need to call the gamefunction?
+
+        BLOOD corresponds to Blood >= 0.95 * max;
+        TICK corresponds to EVERY 6 TICKS, (NOT EVERY TICK);
+        EVERY corresponds to EVERY tick.
+
+        This parameter does nothing for entities that are resType != AUTO """
+        assert updateOn in ["TICK", "EVERY", "BLOOD"]
+        self.updateOn = updateOn
 
     def draw(self, mouse, fmtvars):
         """ Method to draw buttons and relevant text of tech. Returns a pygame
@@ -774,18 +885,33 @@ class Scientific_Hematology(Research):
         # Create a pygame surface:
         techWindow = super(Scientific_Hematology, self).draw(mouse, fmtvars)
         # Draw a nice title:
-        title = Text(Scientific_Hematology.resName.format(self.tech_num), GRAY_DOWN, (5, 5), font=FONT,
-                     centerx=False, centery=False)
+        title = Text(Scientific_Hematology.resName.format(self.tech_num),
+                     GRAY_DOWN,
+                     (5, 5),
+                     font=FONT,
+                     centerx=False,
+                     centery=False)
         title.draw(techWindow)
 
+        # Create the text to throw into the research queue:
+        text = Scientific_Hematology.text[self.tech_num if
+                                          self.tech_num <
+                                          len(Scientific_Hematology.text)
+                                          else -1] \
+        .format(**{'cost':Scientific_Hematology.base_cost * 2**self.tech_num,
+                   'upkeep_mult':Scientific_Hematology.upkeep_mult,
+                   'regen_mult':Scientific_Hematology.regen_mult})
+
         # Now the explanation of the tech:
-        words = Text(Scientific_Hematology.text[self.tech_num if self.tech_num < \
-                                     len(Scientific_Hematology.text) else -1].\
-        format(**{'cost':Scientific_Hematology.base_cost * 2**self.tech_num, \
-                  'upkeep_mult':Scientific_Hematology.upkeep_mult, 'regen_mult':\
-                  Scientific_Hematology.regen_mult}),
-                     BLACK, (10, 21), font=FONT, centerx=False, centery=False)
+        words = Text(text,
+                     BLACK,
+                     (10, 21),
+                     font=FONT,
+                     centerx=False,
+                     centery=False)
         # ......the above is one (poorly readable) block.
+
+        # Write that and return:
         words.draw(techWindow)
         return techWindow
 
@@ -875,8 +1001,11 @@ class None_Autosuck(Research):
         title.draw(techWindow)
 
         # Now the explanation of the tech:
-        words = Text(None_Autosuck.text.format(*[None_Autosuck.base_cost, None_Autosuck.upkeep_mult]), BLACK, (10, 21), font=FONT,
-                     centerx=False, centery=False)
+        words = Text(None_Autosuck.text.format(*[None_Autosuck.base_cost, None_Autosuck.upkeep_mult]),
+                     BLACK, (10, 21),
+                     font=FONT,
+                     centerx=False,
+                     centery=False)
         words.draw(techWindow)
         return techWindow
 
@@ -945,17 +1074,28 @@ elements = {
 #            Button(GRAY_UP, GRAY_DOWN, (210, 210, 100, 100), Game.event_sell_blood_manual, active=True, text='Sell Blood'),
 #            Text("Text stuff... {blood}", RED, (410, 210, 100, 100), active=True, centerx=False, centery=False, human_name="test_container Blood Readout")
 #            ], active=True),
+
+        # Console entities:
         'console_dead_notice': Button(RED_UP, RED_UP, (220, 10, 780, 80), Game.event_null, active=False, text='!!! YOU ARE DEAD !!!'),
         'console_<<': Button(RED_UP, RED_DOWN, (25, 12, 50, 50), Game.event_console_speed_down, active=True, text='<<'),
         'console_==': Button(GRAY_UP, GRAY_DOWN, (85, 12, 50, 50), Game.event_console_speed_normal, active=True, text='=='),
         'console_>>': Button(GREEN_UP, GREEN_DOWN, (145, 12, 50, 50), Game.event_console_speed_up, active=True, text='>>'),
-        'sell_blood_manual_button': Button(GRAY_UP, GRAY_DOWN, (10, 110, 96, 32), Game.event_sell_blood_manual, active=True, text='Sell Blood'),
-        'sell_blood_manual_price': Text('for ${sell_blood_price:6.2f}.', BLACK, (20 + 96, 110 + 16), font=FONT, active=True, centerx=False, centery=True),
 
+        # Game opening sell blood option:
+        'sell_blood_manual_button': Button(GRAY_UP, GRAY_DOWN, (10, 110, 96, 32), Game.event_sell_blood_manual, active=True, text='Sell Blood'),
+        'sell_blood_manual_price': Text('for ${blood_sell_price:6.2f}.', BLACK, (20 + 96, 110 + 16), font=FONT, active=True, centerx=False, centery=True),
+
+        # Menus that become available when you can first sell blood:
         'research_Scientific_BasicEconomics_container': Container(GRAY_LIGHT, (10, 110, 285, 200), [
-            Button(GRAY_UP, GRAY_DOWN, (10, 10, 108, 32), Game.event_Scientific_BasicEconomics_store, active=True, text='Harvest Blood'),
+            Button(GRAY_UP, GRAY_DOWN, (10, 10, 120, 32), Game.event_Scientific_BasicEconomics_store, active=True, text='Harvest Blood', font=BOLDFONT),
+            Text("Stored blood: {blood_stored:<10.4G}", BLACK, (10, 58), centerx=False, centery=True, active=True),
+            Text("Blood per unit: {blood_unit_conversion:<d} per 1 unit.", BLACK, (10, 74), centerx=False, centery=True, active=True),
+            Text("Selling blood for: ${blood_sell_price:0>6.2f}", BLACK, (10, 90), centerx=False, centery=True, active=True),
+            Text("Public demand: {economy_demand_terran}%", BLACK, (10, 106), centerx=False, centery=True, active=True),
+
+
             #TODO: Fix this text
-            # Text('for ${sell_blood_price:6.2f}.', BLACK, (20 + 96, 110 + 16), font=FONT, active=True, centerx=False, centery=True),
+            # Text('for ${blood_sell_price:6.2f}.', BLACK, (20 + 96, 110 + 16), font=FONT, active=True, centerx=False, centery=True),
             ], active=False),
         }
 
@@ -966,18 +1106,48 @@ treeSpiritual = ResearchTree()
 treeNone = ResearchTree()
 
 
+""" Research queue standard button positions. """
+OK_LOWERRIGHT = (300 - 48 - 16, 194 - 32 - 16, 48, 32)
+
 """ List of researches available in the game and their status. """
-research = [
-        {'tree':treeScientific,
-         'class':Scientific_Hematology('ONCLICK', unlocked=False),
-         'actions': [Button(GRAY_UP, GRAY_DOWN, (300 - 48 - 16, 194 - 32 - 16, 48, 32), Game.research_activate_Scientific_Hematology, active=True, text="OK")]},
-        {'tree':treeNone,
-         'class':None_Autosuck('AUTO', unlocked=False, gameFunction=Game.research_None_Autosuck),
-         'actions': [Button(GRAY_UP, GRAY_DOWN, (300 - 48 - 16, 194 - 32 - 16, 48, 32), Game.research_activate_None_Autosuck, active=True, text="OK")]},
-        {'tree':treeScientific,
-         'class':Scientific_BasicEconomics('AUTO', unlocked=False, gameFunction=Game.research_Scientific_BasicEconomics_random_sell),
-         'actions': [Button(GRAY_UP, GRAY_DOWN, (300 - 48 - 16, 194 - 32 - 16, 48, 32), Game.research_activate_Scientific_BasicEconomics, active=True, text="OK")]},
-        ]
+research = {
+        # Hematology Tech
+        "Scientific_Hematology": {'tree':treeScientific,
+                                  'class':Scientific_Hematology('ONCLICK',
+                                                                unlocked=False),
+                                  'actions': [Button(GRAY_UP,
+                                                     GRAY_DOWN,
+                                                     OK_LOWERRIGHT,
+                                                     Game.research_activate_Scientific_Hematology,
+                                                     active=True,
+                                                     text="OK")]},
+
+        # Autosuck tech:
+        "None_Autosuck":{'tree':treeNone,
+                         'class':None_Autosuck('AUTO',
+                                               unlocked=False,
+                                               gameFunction=Game.research_None_Autosuck),
+                         'actions': [Button(GRAY_UP,
+                                            GRAY_DOWN,
+                                            OK_LOWERRIGHT,
+                                            Game.research_activate_None_Autosuck,
+                                            active=True,
+                                            text="OK")]},
+
+        # BasicEconomics
+        "Scientific_BasicEconomics":{'tree':treeScientific,
+                                     'class':Scientific_BasicEconomics('AUTO',
+                                                                       unlocked=False,
+                                                                       gameFunction=Game.event_Scientific_BasicEconomics_handler),
+                                     'actions': [Button(GRAY_UP,
+                                                        GRAY_DOWN,
+                                                        OK_LOWERRIGHT,
+                                                        Game.research_activate_Scientific_BasicEconomics,
+                                                        active=True,
+                                                        text="OK")]},
+
+
+        }
 
 
 if __name__ == "__main__":
