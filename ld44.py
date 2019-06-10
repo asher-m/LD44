@@ -4,7 +4,6 @@
 A game by Asher Merrill for Ludum Dare 44.
 """
 
-import datetime
 import math
 import pygame
 import sys
@@ -171,9 +170,14 @@ class Game:
             if self.vars['blood'] < 100.:
                 # Complicated regen expression following an approximately
                 # logitic curve with sharp bottom at 0:
-                # This is the derivative, f(x) = 100 - 1 / ((x + 39) / 180)**3
-                self.vars['blood'] += 17496000 / (self.vars['blood'] + 39)**4 \
-                * self.vars['blood_regen'] * self.vars['speed']
+                # First set some QoL vars:
+                y = self.vars['blood']
+                # Now figure out how far up the curve we are, which dictates our regen:
+                x = 1/(y - 100) * 3 * (-13 * y + -60 * ((y - 100)**2)**(1/3) + 1300)
+#                print(x, y)
+                # And define how many ticks_per_x there are:
+                ticks_per_x = self.vars['speed']
+                self.vars['blood'] += 100 - 1 / ((x + ticks_per_x + 39) / 180)**3 - (100 - 1 / ((x + 39) / 180)**3)
 
             # Regularly updated elements:
             # Elements from researches EVERY tick, (updateOn == "EVERY"):
