@@ -148,16 +148,15 @@ class Game:
         self.time += self.vars['speed'] / 60
 
         # Check to make sure we're alive:
-        #FIXME
-#        if self.vars['money'] <= 0 or self.vars['blood'] <= 0:
-#            if self.vars['money'] < 0:
-#                self.vars['money'] = 0
-#            if self.vars['blood'] < 0:
-#                self.vars['blood'] = 0
-#            # Set state to dead if we are...
-#            self.alive = False
-#            if not elements['console_dead_notice'].active:
-#                elements['console_dead_notice'].active = True
+        if self.vars['money'] <= 0 or self.vars['blood'] <= 0:
+            if self.vars['money'] < 0:
+                self.vars['money'] = 0
+            if self.vars['blood'] < 0:
+                self.vars['blood'] = 0
+            # Set state to dead if we are...
+            self.alive = False
+            if not elements['console_dead_notice'].active:
+                elements['console_dead_notice'].active = True
 
         # Do these if we're alive:
         if self.alive:
